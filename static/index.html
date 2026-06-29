@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>鹅鸭杀录屏分局检测</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; background: #f5f5f5; }
+    h1 { color: #333; }
+    .card { background: #fff; border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+    label { display: block; margin: 12px 0 4px; font-weight: 600; }
+    input[type=file] { width: 100%; }
+    button { background: #2563eb; color: #fff; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-size: 15px; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .progress { height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; margin: 12px 0; }
+    .progress-bar { height: 100%; background: #2563eb; transition: width .3s; }
+    .round { border-left: 4px solid #2563eb; padding: 12px 16px; margin: 10px 0; background: #f8fafc; font-size: 18px; }
+    .round time { font-family: monospace; font-weight: 700; color: #1d4ed8; }
+    .meta { color: #64748b; font-size: 14px; }
+    .timeline { font-family: monospace; font-size: 12px; max-height: 600px; overflow: auto; background: #1e293b; color: #e2e8f0; padding: 12px; border-radius: 6px; white-space: pre; }
+    .hit { color: #4ade80; }
+    .miss { color: #94a3b8; }
+    .toolbar { margin: 12px 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .toolbar a { color: #2563eb; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h1>鹅鸭杀录屏分局检测</h1>
+
+  <div class="card">
+    <label>上传录屏视频</label>
+    <input type="file" id="videoFile" accept="video/*" />
+    <label><input type="checkbox" id="enableRefine" /> 边界精修（可选，默认关闭）</label>
+    <br /><br />
+    <button id="uploadBtn">开始分析</button>
+    <div class="progress" id="progressWrap" style="display:none">
+      <div class="progress-bar" id="progressBar" style="width:0%"></div>
+    </div>
+    <p class="meta" id="statusText"></p>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none">
+    <h2>各局开始时间</h2>
+    <p class="meta" id="summary"></p>
+    <div id="rounds"></div>
+    <details style="margin-top:16px" open>
+      <summary>全部帧匹配结果（每 2 秒）</summary>
+      <div class="toolbar">
+        <span class="meta" id="frameSummary"></span>
+        <a id="downloadFrames" href="#" download>下载全部帧 TXT</a>
+      </div>
+      <div class="timeline" id="timeline"></div>
+    </details>
+    <details style="margin-top:16px">
+      <summary>各局详情</summary>
+      <div id="roundsDetail"></div>
+    </details>
+  </div>
+
+  <script>
+    const uploadBtn = document.getElementById('uploadBtn');
+    const statusText = document.getElementById('statusText');
+    const progressWrap = document.getElementById('progressWrap');
+    const progressBar = document.getElementById('progressBar');
+
+    uploadBtn.onclick = async () => {
+      const file = document.getElementById('videoFile').files[0];
+      if (!file) { alert('请选择视频'); return; }
+
+      uploadBtn.disabled = true;
+      progressWrap.style.display = 'block';
+      statusText.textContent = '上传中...';
+
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('sample_interval', 2);
+      fd.append('enable_ocr', false);
+      fd.append('enable_refine', document.getElementById('enableRefine').checked);
+
+      const res = await fetch('/api/video/analyze-rounds', { method: 'POST', body: fd });
+      const { task_id } = await res.json();
+
+      const poll = setInterval(async () => {
+        const s = await (await fetch(`/api/video/analyze-rounds/${task_id}`)).json();
+        progressBar.style.width = s.progress + '%';
+        statusText.textContent = `${s.current_step} — ${s.message} (${s.progress}%)`;
+
+        if (s.status === 'completed') {
+          clearInterval(poll);
+          statusText.textContent = '分析完成';
+          showResult(task_id);
+          uploadBtn.disabled = false;
+        } else if (s.status === 'failed') {
+          clearInterval(poll);
+          statusText.textContent = '失败: ' + s.error_message;
+          uploadBtn.disabled = false;
+        }
+      }, 2000);
+    };
+
+    async function showResult(taskId) {
+      const data = await (await fetch(`/api/video/analyze-rounds/${taskId}/result`)).json();
+      document.getElementById('resultCard').style.display = 'block';
+      document.getElementById('summary').textContent =
+        `${data.video_name} · 共 ${data.rounds.length} 局`;
+
+      if (data.rounds.length === 0) {
+        document.getElementById('rounds').innerHTML = '<p class="meta">未识别到任何局，请检查模板或录屏内容。</p>';
+      } else {
+        document.getElementById('rounds').innerHTML = data.rounds.map(r =>
+          `<div class="round">第 ${r.round_id} 局开始：<time>${r.start_time}</time>（${r.start_seconds} 秒）</div>`
+        ).join('');
+      }
+
+      document.getElementById('roundsDetail').innerHTML = data.rounds.map(r =>
+        `<div class="meta" style="margin:8px 0">第 ${r.round_id} 局：开始 ${r.start_time}，结束 ${r.end_time}，命中 ${r.match_frames} 帧，置信度 ${(r.confidence*100).toFixed(0)}%</div>`
+      ).join('');
+
+      document.getElementById('downloadFrames').href = `/api/video/analyze-rounds/${taskId}/timeline/export`;
+
+      const tlRes = await fetch(`/api/video/analyze-rounds/${taskId}/timeline?page=1&page_size=10000`);
+      const tl = await tlRes.json();
+      const matched = tl.timeline.filter(t => t.template_hits && t.template_hits.length).length;
+      document.getElementById('frameSummary').textContent =
+        `共 ${tl.total} 帧 · 命中 ${matched} 帧 · OCR「你已选择」· 显示 match_score`;
+
+      document.getElementById('timeline').textContent = tl.timeline.map(t => {
+        const hit = t.template_hits && t.template_hits.length;
+        const score = (t.match_score ?? t.confidence).toFixed(3);
+        const perTpl = t.template_scores
+          ? Object.entries(t.template_scores).map(([k, v]) => `${k}=${Number(v).toFixed(3)}`).join(' ')
+          : '';
+        const flag = hit ? '命中' : '未命中';
+        return `${t.time}  max=${score}  ${flag}${hit ? '  [' + t.template_hits.join(',') + ']' : ''}${perTpl ? '  | ' + perTpl : ''}`;
+      }).join('\n');
+    }
+
+    function fmt(sec) {
+      const m = Math.floor(sec / 60), s = sec % 60;
+      return m >= 60 ? `${Math.floor(m/60)}小时${m%60}分${s}秒` : `${m}分${s}秒`;
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Runtime data
+uploads/
+tasks/
+debug/
+tessdata/
+
+# Evaluation dataset (large videos + annotations)
+eval/dataset/*.mp4
+eval/dataset/*.mkv
+eval/dataset/*.flv
+eval/dataset/*.webm
+eval/dataset/*.avi
+eval/dataset/*.json
+!eval/dataset/请上传标注数据.txt
+
+# Template screenshots (captured from game recordings)
+templates/*.png
+templates/*.jpg
+!templates/role_chosen_text.png
+!templates/请上传模板.txt
+
+# Local IDE / scripts
+.vscode/
+start.local.bat
+_diag_roi2.py
+
+# OS
+.DS_Store
+Thumbs.db

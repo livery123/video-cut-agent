@@ -1,0 +1,14 @@
+请在此目录上传评估用标注数据：
+
+  video_001.mp4
+  video_001.json
+
+JSON 格式示例：
+{
+  "rounds": [
+    {"start": 18, "end": 602},
+    {"start": 641, "end": 1295}
+  ]
+}
+
+运行评估：python eval/run_eval.py
