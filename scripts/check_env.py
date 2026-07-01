@@ -37,15 +37,6 @@ def main() -> int:
             ok = False
     print()
 
-    template = ROOT / "templates" / "role_chosen_text.png"
-    print("模板:")
-    if template.exists():
-        print(f"  [OK] {template.name}")
-    else:
-        print(f"  [FAIL] 缺少 {template}")
-        ok = False
-    print()
-
     exe, tessdata = _resolve_tesseract()
     cmd_cfg = os.environ.get("TESSERACT_CMD", "").strip()
     tess_cfg = os.environ.get("TESSDATA_PREFIX", "").strip()

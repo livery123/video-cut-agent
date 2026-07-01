@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from video_analyzer.config import FRAME_WIDTH
+from video_analyzer.config import MATCH_FRAME_WIDTH
 
 
 @dataclass
@@ -21,12 +21,10 @@ def _resize_frame(frame: np.ndarray, target_width: int) -> np.ndarray:
     return cv2.resize(frame, (target_width, int(h * scale)), interpolation=cv2.INTER_AREA)
 
 
-def sample_at_intervals(
+def sample_coarse(
     video_path: str,
     interval: float,
-    target_width: int = FRAME_WIDTH,
-    start_seconds: float = 0.0,
-    end_seconds: float | None = None,
+    target_width: int = MATCH_FRAME_WIDTH,
 ) -> list[SampledFrame]:
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -34,13 +32,12 @@ def sample_at_intervals(
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total_duration = (cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) / fps
-    end = end_seconds if end_seconds is not None else total_duration
 
     frames: list[SampledFrame] = []
     frame_id = 0
-    t = start_seconds
+    t = 0.0
 
-    while t <= end + 1e-6:
+    while t <= total_duration + 1e-6:
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
         ok, raw = cap.read()
         if not ok or raw is None:
@@ -59,29 +56,3 @@ def sample_at_intervals(
 
     cap.release()
     return frames
-
-
-def sample_coarse(video_path: str, interval: float, target_width: int = FRAME_WIDTH) -> list[SampledFrame]:
-    return sample_at_intervals(video_path, interval, target_width)
-
-
-def sample_refine_window(
-    video_path: str,
-    center_seconds: float,
-    window: float,
-    interval: float,
-    target_width: int = FRAME_WIDTH,
-) -> list[SampledFrame]:
-    start = max(0.0, center_seconds - window)
-    end = center_seconds + window
-    return sample_at_intervals(video_path, interval, target_width, start, end)
-
-
-def frame_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    if a.shape != b.shape:
-        b = cv2.resize(b, (a.shape[1], a.shape[0]))
-    hist_a = cv2.calcHist([a], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
-    hist_b = cv2.calcHist([b], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
-    cv2.normalize(hist_a, hist_a)
-    cv2.normalize(hist_b, hist_b)
-    return float(cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_CORREL))

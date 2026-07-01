@@ -26,19 +26,8 @@ except ImportError:
             best = max(best, SequenceMatcher(None, chunk, keyword).ratio())
         return best * 100
 
-from video_analyzer.config import (
-    DARK_RATIO_THRESHOLD,
-    FUZZY_MATCH_THRESHOLD,
-    KEYWORDS,
-    MIN_STATE_SCORE,
-    OCR_SCORE_RULES,
-    ROI_REGIONS,
-)
-from video_analyzer.utils import empty_score
-
 logger = logging.getLogger(__name__)
 
-# 常见安装路径（可被 .env 中的 TESSERACT_CMD / TESSERACT_SEARCH_PATHS 覆盖）
 DEFAULT_TESSERACT_CANDIDATES = [
     Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
     Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
@@ -61,10 +50,6 @@ def _tessdata_for_exe(exe: Path, project_tessdata: Path, project_chi: Path) -> s
 
 
 def _resolve_tesseract() -> tuple[str | None, str | None]:
-    """返回 (tesseract_exe, tessdata_dir)。
-
-    优先级：.env 显式配置 > 搜索路径列表 > PATH（exe 为 None）。
-    """
     from video_analyzer.config import ROOT_DIR
 
     project_tessdata = ROOT_DIR / "tessdata"
@@ -107,11 +92,9 @@ def _resolve_tesseract() -> tuple[str | None, str | None]:
 
 
 class OCRDetector:
-    def __init__(self, enabled: bool = True):
-        self.enabled = enabled
+    def __init__(self) -> None:
         self._reader: Callable[[np.ndarray], str] | None = None
-        if enabled:
-            self._init_reader()
+        self._init_reader()
 
     def _init_reader(self) -> None:
         try:
@@ -137,8 +120,9 @@ class OCRDetector:
 
             self._reader = read
         except Exception as exc:
-            logger.warning("OCR 不可用，将仅依赖模板匹配: %s", exc)
-            self.enabled = False
+            raise RuntimeError(
+                "OCR 不可用：请安装 Tesseract 并配置 chi_sim 语言包"
+            ) from exc
 
     @staticmethod
     def crop_roi(frame: np.ndarray, region: tuple[float, float, float, float]) -> np.ndarray:
@@ -146,91 +130,7 @@ class OCRDetector:
         x1, y1, x2, y2 = region
         return frame[int(h * y1) : int(h * y2), int(w * x1) : int(w * x2)]
 
-    def extract_text(self, frame: np.ndarray, prioritize_role: bool = False) -> list[str]:
-        if not self.enabled or self._reader is None:
-            return []
-
-        if prioritize_role:
-            region_order = ["role_center", "role_left", "center", "bottom", "top"]
-        else:
-            region_order = ["role_center", "center", "bottom", "top", "role_left"]
-
-        texts: list[str] = []
-        for name in region_order:
-            region = ROI_REGIONS.get(name)
-            if not region:
-                continue
-            roi = self.crop_roi(frame, region)
-            if roi.size == 0:
-                continue
-            try:
-                raw = self._reader(roi).strip()
-            except Exception as exc:
-                logger.warning("OCR 单帧失败，跳过: %s", exc)
-                continue
-            if raw:
-                texts.extend(line.strip() for line in raw.splitlines() if line.strip())
-        return texts
-
-    @staticmethod
-    def fuzzy_hit(text: str, keyword: str) -> bool:
-        return _fuzzy_ratio(text, keyword) >= FUZZY_MATCH_THRESHOLD
-
-    def score_from_texts(self, texts: list[str]) -> dict[str, int]:
-        score = empty_score()
-        joined = " ".join(texts)
-
-        for keywords, state, points in OCR_SCORE_RULES:
-            if any(self.fuzzy_hit(joined, kw) or any(self.fuzzy_hit(t, kw) for t in texts) for kw in keywords):
-                score[state] += points
-
-        for state, words in KEYWORDS.items():
-            for word in words:
-                if self.fuzzy_hit(joined, word) or any(self.fuzzy_hit(t, word) for t in texts):
-                    score[state] += 1
-
-        return score
-
-    @staticmethod
-    def dark_ratio(frame: np.ndarray) -> float:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        return float(np.mean(gray < 30) / 255.0)
-
-    def should_run_ocr(
-        self,
-        template_hits: list[str],
-        score: dict[str, int],
-        dark_ratio: float,
-        prev_state: str | None,
-        curr_top_state: str | None,
-        visual_hits: list[str] | None = None,
-    ) -> bool:
-        if not self.enabled:
-            return False
-
-        visual_hits = visual_hits or []
-        role_templates = (
-            "role_card",
-            "role_chosen_text",
-            "role_list_panel",
-            "role_page_layout",
-        )
-        lobby_hits = any(h in template_hits for h in ("start_button", "ready_button"))
-        role_hits = any(h in template_hits for h in role_templates)
-        role_visual = any(
-            h in visual_hits
-            for h in ("role_reveal_layout", "role_title_band", "center_role_icon")
-        )
-        ending_hits = "victory_text" in template_hits
-
-        if role_hits or role_visual:
-            return True
-        if lobby_hits or ending_hits:
-            return True
-        if dark_ratio >= DARK_RATIO_THRESHOLD:
-            return True
-        if max(score.values()) < MIN_STATE_SCORE:
-            return True
-        if prev_state and curr_top_state and prev_state != curr_top_state:
-            return True
-        return False
+    def read_text(self, image: np.ndarray) -> str:
+        if self._reader is None:
+            return ""
+        return self._reader(image)

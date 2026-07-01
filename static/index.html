@@ -19,8 +19,6 @@
     .round time { font-family: monospace; font-weight: 700; color: #1d4ed8; }
     .meta { color: #64748b; font-size: 14px; }
     .timeline { font-family: monospace; font-size: 12px; max-height: 600px; overflow: auto; background: #1e293b; color: #e2e8f0; padding: 12px; border-radius: 6px; white-space: pre; }
-    .hit { color: #4ade80; }
-    .miss { color: #94a3b8; }
     .toolbar { margin: 12px 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
     .toolbar a { color: #2563eb; font-size: 14px; }
   </style>
@@ -31,8 +29,8 @@
   <div class="card">
     <label>上传录屏视频</label>
     <input type="file" id="videoFile" accept="video/*" />
-    <label><input type="checkbox" id="enableRefine" /> 边界精修（可选，默认关闭）</label>
-    <br /><br />
+    <p class="meta">采样间隔 12 秒 · OCR 并行×8 · 识别「你已选择」</p>
+    <br />
     <button id="uploadBtn">开始分析</button>
     <div class="progress" id="progressWrap" style="display:none">
       <div class="progress-bar" id="progressBar" style="width:0%"></div>
@@ -45,7 +43,7 @@
     <p class="meta" id="summary"></p>
     <div id="rounds"></div>
     <details style="margin-top:16px" open>
-      <summary>全部帧匹配结果（每 2 秒）</summary>
+      <summary>全部帧 OCR 结果（每 12 秒）</summary>
       <div class="toolbar">
         <span class="meta" id="frameSummary"></span>
         <a id="downloadFrames" href="#" download>下载全部帧 TXT</a>
@@ -74,9 +72,6 @@
 
       const fd = new FormData();
       fd.append('file', file);
-      fd.append('sample_interval', 2);
-      fd.append('enable_ocr', false);
-      fd.append('enable_refine', document.getElementById('enableRefine').checked);
 
       const res = await fetch('/api/video/analyze-rounds', { method: 'POST', body: fd });
       const { task_id } = await res.json();
@@ -103,10 +98,10 @@
       const data = await (await fetch(`/api/video/analyze-rounds/${taskId}/result`)).json();
       document.getElementById('resultCard').style.display = 'block';
       document.getElementById('summary').textContent =
-        `${data.video_name} · 共 ${data.rounds.length} 局`;
+        `${data.video_name} · 共 ${data.rounds.length} 局 · 间隔 ${data.sample_interval}s`;
 
       if (data.rounds.length === 0) {
-        document.getElementById('rounds').innerHTML = '<p class="meta">未识别到任何局，请检查模板或录屏内容。</p>';
+        document.getElementById('rounds').innerHTML = '<p class="meta">未识别到任何局，请检查录屏是否包含「你已选择」界面。</p>';
       } else {
         document.getElementById('rounds').innerHTML = data.rounds.map(r =>
           `<div class="round">第 ${r.round_id} 局开始：<time>${r.start_time}</time>（${r.start_seconds} 秒）</div>`
@@ -121,24 +116,16 @@
 
       const tlRes = await fetch(`/api/video/analyze-rounds/${taskId}/timeline?page=1&page_size=10000`);
       const tl = await tlRes.json();
-      const matched = tl.timeline.filter(t => t.template_hits && t.template_hits.length).length;
+      const matched = tl.timeline.filter(t => t.state === 'ROLE_START').length;
       document.getElementById('frameSummary').textContent =
-        `共 ${tl.total} 帧 · 命中 ${matched} 帧 · OCR「你已选择」· 显示 match_score`;
+        `共 ${tl.total} 帧 · 命中 ${matched} 帧`;
 
       document.getElementById('timeline').textContent = tl.timeline.map(t => {
-        const hit = t.template_hits && t.template_hits.length;
+        const hit = t.state === 'ROLE_START';
         const score = (t.match_score ?? t.confidence).toFixed(3);
-        const perTpl = t.template_scores
-          ? Object.entries(t.template_scores).map(([k, v]) => `${k}=${Number(v).toFixed(3)}`).join(' ')
-          : '';
-        const flag = hit ? '命中' : '未命中';
-        return `${t.time}  max=${score}  ${flag}${hit ? '  [' + t.template_hits.join(',') + ']' : ''}${perTpl ? '  | ' + perTpl : ''}`;
+        const ocr = (t.ocr_text || []).join('');
+        return `${t.time}  score=${score}  ${hit ? '命中' : '未命中'}${ocr ? '  「' + ocr + '」' : ''}`;
       }).join('\n');
-    }
-
-    function fmt(sec) {
-      const m = Math.floor(sec / 60), s = sec % 60;
-      return m >= 60 ? `${Math.floor(m/60)}小时${m%60}分${s}秒` : `${m}分${s}秒`;
     }
   </script>
 </body>

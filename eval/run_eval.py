@@ -53,7 +53,7 @@ def main() -> None:
         print('  {"rounds": [{"start": 18, "end": 602}]}')
         return
 
-    pipeline = AnalysisPipeline(enable_ocr=True)
+    pipeline = AnalysisPipeline()
     total_pred = total_truth = total_matched = 0
     all_errors: list[float] = []
     low_conf = 0

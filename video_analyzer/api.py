@@ -1,16 +1,14 @@
 import logging
-import shutil
 import threading
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from video_analyzer.config import (
     COARSE_SAMPLE_INTERVAL,
-    MAX_DURATION_SECONDS,
     MAX_FILE_SIZE_MB,
     ROOT_DIR,
     SUPPORTED_FORMATS,
@@ -49,14 +47,12 @@ def _run_analysis(task_id: str, video_path: Path, options: dict) -> None:
             store.update_progress(task_id, progress, step, message)
 
         pipeline = AnalysisPipeline(
-            enable_ocr=options.get("enable_ocr", True),
             progress_callback=on_progress,
             cancelled_check=lambda: store.is_cancelled(task_id),
         )
         result = pipeline.run(
             str(video_path),
             sample_interval=options.get("sample_interval", COARSE_SAMPLE_INTERVAL),
-            enable_refine=options.get("enable_refine", True),
             task_id=task_id,
         )
         store.save_timeline(task_id, result.pop("timeline"))
@@ -79,12 +75,8 @@ def index():
 
 @app.post("/api/video/analyze-rounds", response_model=TaskCreatedResponse)
 async def analyze_rounds(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     sample_interval: float = Form(COARSE_SAMPLE_INTERVAL),
-    enable_ocr: bool = Form(True),
-    enable_refine: bool = Form(True),
-    game_type: str = Form("goose_goose_duck"),
 ):
     suffix = Path(file.filename or "").suffix.lower().lstrip(".")
     if suffix not in SUPPORTED_FORMATS:
@@ -95,12 +87,7 @@ async def analyze_rounds(
     if size_mb > MAX_FILE_SIZE_MB:
         raise HTTPException(400, f"文件过大: {size_mb:.1f}MB，上限 {MAX_FILE_SIZE_MB}MB")
 
-    options = {
-        "sample_interval": sample_interval,
-        "enable_ocr": enable_ocr,
-        "enable_refine": enable_refine,
-        "game_type": game_type,
-    }
+    options = {"sample_interval": sample_interval}
     task_id = store.create_task(file.filename or "video.mp4", options)
 
     video_path = UPLOADS_DIR / f"{task_id}_{file.filename}"
@@ -191,17 +178,15 @@ def export_task_timeline(task_id: str):
         raise HTTPException(404, "时间线不存在")
 
     lines = [
-        "frame_id\tseconds\ttime\tstate\tmatch_score\tmatched\ttemplate_hits\ttemplate_scores",
+        "frame_id\tseconds\ttime\tstate\tmatch_score\tmatched\tocr_text",
     ]
     for t in timeline:
-        hits = ",".join(t.get("template_hits") or [])
-        matched = "Y" if hits else "N"
+        ocr = " ".join(t.get("ocr_text") or [])
+        matched = "Y" if t.get("state") == "ROLE_START" else "N"
         score = t.get("match_score", t.get("confidence", 0))
-        tpl_scores = t.get("template_scores") or {}
-        scores_str = ";".join(f"{k}:{v:.3f}" for k, v in tpl_scores.items())
         lines.append(
             f"{t.get('frame_id', '')}\t{t.get('seconds', '')}\t{t.get('time', '')}\t"
-            f"{t.get('state', '')}\t{score:.3f}\t{matched}\t{hits}\t{scores_str}"
+            f"{t.get('state', '')}\t{score:.3f}\t{matched}\t{ocr}"
         )
 
     content = "\n".join(lines)
